@@ -50,7 +50,7 @@ The app is a small dependency-free Node.js service with a browser UI. It does no
 Start the container from a prebuilt image:
 
 ```bash
-IMAGE=ghcr.io/<github-user>/szurubooru-tools-web:latest docker compose up -d
+IMAGE=ghcr.io/shaktoth/szurubooru-tools-web:latest docker compose up -d
 ```
 
 Open the web UI:
@@ -61,29 +61,6 @@ http://localhost:8080
 
 On a remote Docker host, replace `localhost` with the host address.
 
-## Publishing the Prebuilt Image
-
-This repository includes a GitHub Actions workflow at:
-
-```text
-.github/workflows/docker-publish.yml
-```
-
-After pushing the repository to GitHub, open the repository's `Actions` tab and run `Build and publish Docker image`, or push to the `main` branch. The workflow publishes:
-
-```text
-ghcr.io/<github-user-or-org>/szurubooru-tools-web:latest
-```
-
-The workflow builds `linux/amd64` and `linux/arm64` images.
-
-If the package is private, allow your Docker host to pull from GHCR by logging in:
-
-```bash
-docker login ghcr.io
-```
-
-For public deployments, set the package visibility to public in GitHub Packages.
 
 ## Compose Setup
 
@@ -224,84 +201,10 @@ Uploads multiple local files. Shared tags, safety, source, relations, and an opt
 - `Pool-Sync`: checks or synchronizes imported e621 pools.
 - `Duplicate Scan`: groups Szurubooru posts by `checksum` and `checksumMD5`.
 
-## Updating
-
-```bash
-git pull
-docker compose pull
-docker compose up -d
-```
-
-The Docker volume with saved configuration remains untouched.
-
-## GitHub Upload
-
-Before publishing:
-
-- Do not commit real API tokens.
-- Do not commit `data/`.
-- Do not commit generated config files.
-
-Suggested first upload:
-
-```bash
-git init
-git add .
-git commit -m "Initial Docker web app"
-git branch -M main
-git remote add origin https://github.com/<user>/<repo>.git
-git push -u origin main
-```
-
-After the first push, GitHub Actions builds the image. Use this in your Docker host:
-
-```env
-IMAGE=ghcr.io/<user>/<repo-image-name>:latest
-```
-
-## Troubleshooting
-
-### `Bind mount failed ... does not exist`
-
-The bind mount path does not exist or was interpreted relative to the Compose runner's working directory. Prefer the included named volume or use an absolute host path:
-
-```yaml
-volumes:
-  - /opt/szurubooru-tools-data:/data
-```
-
-### `failed to read dockerfile`
-
-This only applies when using `compose.build.yaml`. The default `compose.yaml` pulls a prebuilt image and does not need the Dockerfile on the runtime host.
-
-For local builds, set:
-
-```env
-APP_DIR=/absolute/path/to/szurubooru-tools
-```
-
-### `COPY web: file not found`
-
-Only the Compose file was copied, not the full repository. The build context must include `Dockerfile`, `web/`, and `public/`.
-
-### Logs show `npm error signal SIGTERM`
-
-Rebuild the image. Versions before `1.1.1` started through `npm start`, which printed SIGTERM as an npm error when Docker stopped or recreated the container. The current Dockerfile starts Node directly.
-
-### Web UI loads, but imports cannot reach Szurubooru
-
-`SZURU_BASE_URL` is not reachable from inside the container. Use a Docker service name on the same network or a host address reachable by containers.
-
-### Import returns 401 or 403
-
-Check the Szurubooru user and token. The user needs privileges to create and edit posts, tags, and pools.
-
-### e621 search returns fewer posts than expected
-
-Set `E621_USER` and `E621_API_KEY`, or enter them in the web UI.
-
 ## Security
 
 - Do not expose this UI publicly without authentication in front of it.
-- Keep API tokens out of public repositories.
-- Prefer environment variables or the web UI config for credentials.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -767,14 +767,15 @@ async function importRedditPost(config, redditUrl, additionalTags, log) {
   return { postId: post.id, canonicalUrl, imported };
 }
 
-function startJob(type, worker) {
+function startJob(type, details, worker) {
   const id = randomUUID();
-  const job = { id, type, status: "running", logs: [], createdAt: new Date().toISOString(), result: null, error: null };
+  const job = { id, type, details: details || {}, status: "running", logs: [], createdAt: new Date().toISOString(), result: null, error: null };
   jobs.set(id, job);
   const log = (message) => {
     job.logs.push({ at: new Date().toISOString(), message });
     if (job.logs.length > 500) job.logs.shift();
   };
+  log(`Job gestartet: ${type}`);
   Promise.resolve()
     .then(() => worker(log))
     .then((result) => {
@@ -843,7 +844,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/import/e621-post" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
-      const job = startJob("e621-post", (log) => {
+      const job = startJob("e621-post", { postId: Number(body.postId) }, (log) => {
         log(`Importiere e621-Post ${body.postId}`);
         return importE621Post(config, Number(body.postId), body.tags || []);
       });
@@ -852,13 +853,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/import/e621-pool" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
-      const job = startJob("e621-pool", (log) => importE621Pool(config, Number(body.poolId), log));
+      const job = startJob("e621-pool", { poolId: Number(body.poolId) }, (log) => importE621Pool(config, Number(body.poolId), log));
       return jsonResponse(res, 202, job);
     }
     if (url.pathname === "/api/import/e621-family" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
-      const job = startJob("e621-family", async (log) => {
+      const job = startJob("e621-family", { postId: Number(body.postId) }, async (log) => {
         const ids = await getE621FamilyPostIds(config, Number(body.postId));
         return importE621PostSet(config, ids, `Familie zu ${body.postId}`, log);
       });
@@ -867,31 +868,32 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/import/e621-query" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
-      const job = startJob("e621-query", (log) => importE621Query(config, String(body.query || "").trim(), log));
+      const query = String(body.query || "").trim();
+      const job = startJob("e621-query", { query }, (log) => importE621Query(config, query, log));
       return jsonResponse(res, 202, job);
     }
     if (url.pathname === "/api/download/e621-pool" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
-      const job = startJob("download-pool", (log) => downloadE621Pool(config, Number(body.poolId), log));
+      const job = startJob("download-pool", { poolId: Number(body.poolId) }, (log) => downloadE621Pool(config, Number(body.poolId), log));
       return jsonResponse(res, 202, job);
     }
     if (url.pathname === "/api/download/e621-post" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
-      const job = startJob("download-post", (log) => downloadE621Post(config, Number(body.postId), log));
+      const job = startJob("download-post", { postId: Number(body.postId) }, (log) => downloadE621Post(config, Number(body.postId), log));
       return jsonResponse(res, 202, job);
     }
     if (url.pathname === "/api/import/reddit" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
       const tags = String(body.tags || "").split(/[,;\n]+/).map((tag) => tag.trim()).filter(Boolean);
-      const job = startJob("reddit", (log) => importRedditPost(config, body.url, tags, log));
+      const job = startJob("reddit", { url: body.url, tags }, (log) => importRedditPost(config, body.url, tags, log));
       return jsonResponse(res, 202, job);
     }
     if (url.pathname === "/api/duplicates/scan" && req.method === "POST") {
       const config = await loadConfig();
-      const job = startJob("duplicate-scan", async (log) => {
+      const job = startJob("duplicate-scan", {}, async (log) => {
         const posts = await listAllSzuruPosts(config, log);
         const groups = duplicateGroups(posts);
         return { postCount: posts.length, duplicateGroupCount: groups.length, groups };
@@ -900,14 +902,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/pools/sync-status" && req.method === "POST") {
       const config = await loadConfig();
-      const job = startJob("pool-sync-status", (log) => poolSyncStatus(config, log));
+      const job = startJob("pool-sync-status", {}, (log) => poolSyncStatus(config, log));
       return jsonResponse(res, 202, job);
     }
     if (url.pathname === "/api/pools/sync" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
       const ids = Array.isArray(body.poolIds) ? body.poolIds.map(Number).filter(Boolean) : [Number(body.poolId)].filter(Boolean);
-      const job = startJob("pool-sync", async (log) => {
+      const job = startJob("pool-sync", { poolIds: ids }, async (log) => {
         const results = [];
         for (const poolId of ids) results.push(await syncE621Pool(config, poolId, log));
         return results;
@@ -921,7 +923,7 @@ const server = http.createServer(async (req, res) => {
       const config = await loadConfig();
       const tags = String(fields.tags || "").split(/[,;\n]+/).map((tag) => tag.trim()).filter(Boolean);
       const relationIds = String(fields.relations || "").split(/[^0-9]+/).filter(Boolean).map(Number);
-      const job = startJob("bulk-upload", async (log) => {
+      const job = startJob("bulk-upload", { fileCount: files.length, tags, poolName: fields.poolName || "" }, async (log) => {
         const imported = [];
         for (let index = 0; index < files.length; index += 1) {
           const file = files[index];

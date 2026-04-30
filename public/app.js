@@ -138,6 +138,11 @@ async function loadJobs() {
     const node = document.createElement("article");
     node.className = "job";
     const log = job.logs.map((entry) => `[${new Date(entry.at).toLocaleTimeString()}] ${entry.message}`).join("\n");
+    const details = job.details && Object.keys(job.details).length ? JSON.stringify(job.details, null, 2) : "";
+    const result = job.result === null || job.result === undefined ? "" : JSON.stringify(job.result, null, 2);
+    const body = [details && `Details:\n${details}`, log && `Logs:\n${log}`, result && `Result:\n${result}`]
+      .filter(Boolean)
+      .join("\n\n") || (job.status === "running" ? "Job laeuft. Warte auf Logausgabe..." : "Keine Ausgabe.");
     node.innerHTML = `
       <header>
         <strong>${job.type}</strong>
@@ -147,7 +152,7 @@ async function loadJobs() {
       ${job.error ? `<p class="status-error">${job.error}</p>` : ""}
       <pre></pre>
     `;
-    $("pre", node).textContent = log || JSON.stringify(job.result, null, 2) || "";
+    $("pre", node).textContent = body;
     list.append(node);
   }
 }

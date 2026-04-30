@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.3 - Job display improvements
+
+### Added
+
+- Jobs now include structured `details` metadata such as query, post ID, pool ID, URL, or file count.
+- Jobs write an initial log entry immediately after creation.
+- MIT license file and package metadata.
+
+### Fixed
+
+- Running jobs without a result no longer show `null` in the UI.
+- Job cards now show details, logs, and results separately.
+
 ## 1.1.2 - Prebuilt image workflow
 
 ### Added
