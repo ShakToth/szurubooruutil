@@ -47,10 +47,10 @@ The app is a small dependency-free Node.js service with a browser UI. It does no
 
 ## Quick Start
 
-Build and start the container:
+Start the container from a prebuilt image:
 
 ```bash
-docker compose up -d --build
+IMAGE=ghcr.io/<github-user>/szurubooru-tools-web:latest docker compose up -d
 ```
 
 Open the web UI:
@@ -61,6 +61,30 @@ http://localhost:8080
 
 On a remote Docker host, replace `localhost` with the host address.
 
+## Publishing the Prebuilt Image
+
+This repository includes a GitHub Actions workflow at:
+
+```text
+.github/workflows/docker-publish.yml
+```
+
+After pushing the repository to GitHub, open the repository's `Actions` tab and run `Build and publish Docker image`, or push to the `main` branch. The workflow publishes:
+
+```text
+ghcr.io/<github-user-or-org>/szurubooru-tools-web:latest
+```
+
+The workflow builds `linux/amd64` and `linux/arm64` images.
+
+If the package is private, allow your Docker host to pull from GHCR by logging in:
+
+```bash
+docker login ghcr.io
+```
+
+For public deployments, set the package visibility to public in GitHub Packages.
+
 ## Compose Setup
 
 The included `compose.yaml` uses a named volume for `/data`:
@@ -68,9 +92,7 @@ The included `compose.yaml` uses a named volume for `/data`:
 ```yaml
 services:
   szurubooru-tools:
-    build:
-      context: ${APP_DIR:-.}
-      dockerfile: Dockerfile
+    image: ${IMAGE:-ghcr.io/your-github-user/szurubooru-tools-web:latest}
     ports:
       - "8080:8080"
     volumes:
@@ -80,13 +102,17 @@ volumes:
   szurubooru-tools-data:
 ```
 
-If your Compose runner starts from a different working directory, set `APP_DIR` to the absolute path of this repository:
+Set the `IMAGE` variable to your published image:
 
 ```env
-APP_DIR=/opt/szurubooru-tools
+IMAGE=ghcr.io/<github-user-or-org>/szurubooru-tools-web:latest
 ```
 
-In that directory, `Dockerfile`, `web/`, and `public/` must exist.
+For local development builds, use `compose.build.yaml` instead:
+
+```bash
+docker compose -f compose.build.yaml up -d --build
+```
 
 ## Configuration
 
@@ -202,7 +228,8 @@ Uploads multiple local files. Shared tags, safety, source, relations, and an opt
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 The Docker volume with saved configuration remains untouched.
@@ -226,6 +253,12 @@ git remote add origin https://github.com/<user>/<repo>.git
 git push -u origin main
 ```
 
+After the first push, GitHub Actions builds the image. Use this in your Docker host:
+
+```env
+IMAGE=ghcr.io/<user>/<repo-image-name>:latest
+```
+
 ## Troubleshooting
 
 ### `Bind mount failed ... does not exist`
@@ -239,7 +272,9 @@ volumes:
 
 ### `failed to read dockerfile`
 
-The build context does not point at this repository. Set:
+This only applies when using `compose.build.yaml`. The default `compose.yaml` pulls a prebuilt image and does not need the Dockerfile on the runtime host.
+
+For local builds, set:
 
 ```env
 APP_DIR=/absolute/path/to/szurubooru-tools

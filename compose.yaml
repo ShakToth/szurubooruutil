@@ -1,13 +1,13 @@
 services:
   szurubooru-tools:
-    image: ${IMAGE:-ghcr.io/your-github-user/szurubooru-tools-web:latest}
+    image: ghcr.io/shaktoth/szurubooru-tools-web:latest
     container_name: szurubooru-tools
     restart: unless-stopped
     ports:
-      - "${HOST_PORT:-8080}:${APP_PORT:-8080}"
+      - ${HOST_PORT:-10000}:${APP_PORT:-10000}
     environment:
       TZ: ${TZ:-Europe/Berlin}
-      PORT: ${APP_PORT:-8080}
+      PORT: ${APP_PORT:-10000}
       DATA_DIR: /data
       DOWNLOAD_DIR: /data/downloads
       # Optional: set here or save later in the web UI.
@@ -18,6 +18,6 @@ services:
       # E621_API_KEY: "api-key"
     volumes:
       - szurubooru-tools-data:/data
-
 volumes:
-  szurubooru-tools-data:
+  szurubooru-tools-data: null
+networks: {}
