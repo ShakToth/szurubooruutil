@@ -1,0 +1,12 @@
+{
+  "name": "szurubooru-tools-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node web/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

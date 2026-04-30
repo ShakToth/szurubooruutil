@@ -1,0 +1,25 @@
+services:
+  szurubooru-tools:
+    build:
+      context: ${APP_DIR:-.}
+      dockerfile: Dockerfile
+    container_name: szurubooru-tools
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Europe/Berlin
+      PORT: "8080"
+      DATA_DIR: /data
+      DOWNLOAD_DIR: /data/downloads
+      # Optional: hier setzen oder spaeter im Webinterface speichern.
+      # SZURU_BASE_URL: "http://dein-szurubooru-host:5200"
+      # SZURU_USER: "Importer"
+      # SZURU_TOKEN: "token"
+      # E621_USER: "e621-user"
+      # E621_API_KEY: "api-key"
+    volumes:
+      - szurubooru-tools-data:/data
+
+volumes:
+  szurubooru-tools-data:

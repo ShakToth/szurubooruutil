@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Szurubooru Tools</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Szurubooru Tools</h1>
+      <nav>
+        <button class="tab active" data-tab="e621">e621</button>
+        <button class="tab" data-tab="reddit">Reddit</button>
+        <button class="tab" data-tab="bulk">Bulk</button>
+        <button class="tab" data-tab="tools">Tools</button>
+        <button class="tab" data-tab="jobs">Jobs</button>
+        <button class="tab" data-tab="config">Config</button>
+      </nav>
+    </header>
+
+    <main>
+      <section id="e621" class="view active">
+        <form id="e621-search" class="toolbar">
+          <input name="query" placeholder="artist_tag oder e621 Query" autocomplete="off">
+          <button>Suchen</button>
+          <button type="button" id="import-query">Query importieren</button>
+        </form>
+        <div class="summary" id="e621-summary"></div>
+        <div class="tables">
+          <section>
+            <h2>Pools</h2>
+            <div class="table-wrap">
+              <table id="pool-table">
+                <thead><tr><th>ID</th><th>Name</th><th>Posts</th><th>Treffer</th><th>Aktionen</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>Videos</h2>
+            <div class="table-wrap">
+              <table id="video-table">
+                <thead><tr><th>ID</th><th>Rating</th><th>Score</th><th>Favs</th><th>Aktionen</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>Alle Posts</h2>
+            <div class="table-wrap">
+              <table id="post-table">
+                <thead><tr><th>ID</th><th>Typ</th><th>Rating</th><th>Score</th><th>Favs</th><th>Aktionen</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="reddit" class="view">
+        <form id="reddit-import" class="stack">
+          <label>Reddit-Post-Link<input name="url" placeholder="https://www.reddit.com/r/.../comments/..."></label>
+          <label>Zusatz-Tags<textarea name="tags" rows="4" placeholder="tag_a, tag_b"></textarea></label>
+          <button>Import starten</button>
+        </form>
+      </section>
+
+      <section id="bulk" class="view">
+        <form id="bulk-upload" class="stack" enctype="multipart/form-data">
+          <label>Dateien<input name="files" type="file" multiple></label>
+          <label>Gemeinsame Tags<textarea name="tags" rows="3" placeholder="tag_a, tag_b"></textarea></label>
+          <label>Safety
+            <select name="safety">
+              <option value="unsafe">unsafe</option>
+              <option value="sketchy">sketchy</option>
+              <option value="safe">safe</option>
+            </select>
+          </label>
+          <label>Quelle<input name="source" placeholder="optional"></label>
+          <label>Related Post-IDs<input name="relations" placeholder="123, 456"></label>
+          <label>Pool-Name<input name="poolName" placeholder="optional"></label>
+          <label>Pool-Beschreibung<textarea name="poolDescription" rows="3"></textarea></label>
+          <label class="inline"><input name="linkUploads" type="checkbox" value="true"> Neue Uploads gegenseitig verknuepfen</label>
+          <button>Alles hochladen</button>
+        </form>
+      </section>
+
+      <section id="tools" class="view">
+        <div class="tools-grid">
+          <form id="family-import" class="stack">
+            <h2>Familie importieren</h2>
+            <label>e621 Post-ID<input name="postId" inputmode="numeric"></label>
+            <button>Familie importieren</button>
+          </form>
+          <form id="post-download" class="stack">
+            <h2>Post herunterladen</h2>
+            <label>e621 Post-ID<input name="postId" inputmode="numeric"></label>
+            <button>Herunterladen</button>
+          </form>
+          <form id="pool-sync" class="stack">
+            <h2>Pool-Sync</h2>
+            <label>e621 Pool-IDs<input name="poolIds" placeholder="123, 456"></label>
+            <div class="toolbar">
+              <button type="button" id="pool-sync-status">Status pruefen</button>
+              <button>Auswahl syncen</button>
+            </div>
+          </form>
+          <form id="duplicate-scan" class="stack">
+            <h2>Duplicate Scan</h2>
+            <button>Scan starten</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="jobs" class="view">
+        <div class="toolbar"><button id="refresh-jobs">Aktualisieren</button></div>
+        <div id="job-list" class="job-list"></div>
+      </section>
+
+      <section id="config" class="view">
+        <form id="config-form" class="stack">
+          <h2>Szurubooru</h2>
+          <label>Base URL<input name="szuruBaseUrl" placeholder="http://host:port"></label>
+          <label>User<input name="szuruUser"></label>
+          <label>Token<input name="szuruToken" type="password" placeholder="leer lassen = behalten"></label>
+          <h2>e621</h2>
+          <label>User<input name="e621User"></label>
+          <label>API Key<input name="e621ApiKey" type="password" placeholder="leer lassen = behalten"></label>
+          <button>Speichern</button>
+        </form>
+      </section>
+    </main>
+
+    <div id="toast"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
