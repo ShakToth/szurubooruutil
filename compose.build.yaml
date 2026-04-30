@@ -1,6 +1,8 @@
 services:
   szurubooru-tools:
-    image: ${IMAGE:-ghcr.io/your-github-user/szurubooru-tools-web:latest}
+    build:
+      context: ${APP_DIR:-.}
+      dockerfile: Dockerfile
     container_name: szurubooru-tools
     restart: unless-stopped
     ports:

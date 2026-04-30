@@ -1,222 +1,221 @@
 # Szurubooru Tools Web
 
-Containerfaehige Weboberflaeche fuer e621- und Reddit-Importe nach Szurubooru.
+Docker web interface for importing e621 and Reddit media into Szurubooru.
 
-Die App ist als Ersatz fuer lokale Windows-Forms/PowerShell-Workflows gedacht und laeuft als kleine Node.js-Webapp in Docker. Sie bringt keine Datenbank mit; Konfiguration und Jobdaten liegen in einem Docker-Volume.
+The app is a small dependency-free Node.js service with a browser UI. It does not require a database. Configuration, downloaded files, and runtime data are stored under `/data` inside the container.
 
-## Funktionen
+## Features
 
-- e621 Query oder Artist-Tag suchen
-- Treffer nach Pools, Videos und allen Posts anzeigen
-- einzelne e621-Posts nach Szurubooru importieren
-- komplette e621-Pools nach Szurubooru importieren
-- Szurubooru-Pool fuer importierte e621-Pools anlegen oder aktualisieren
-- e621-Posts und Pools nach `/data/downloads` herunterladen
-- Parent/Child-Familien von e621 importieren und in Szurubooru verknuepfen
-- komplette e621 Queries importieren, inklusive `fav:<user>` Favoriten-Sync
-- Reddit-Post oder Reddit-Galerie nach Szurubooru importieren
-- Basis-Tags fuer Reddit-Importe automatisch erzeugen
-- Galerie-Posts in Szurubooru gegenseitig verknuepfen
-- lokale Dateien per Bulk-Upload hochladen, taggen, verknuepfen und optional in Pools legen
-- Duplicate Scan ueber Szurubooru Checksums
-- Pool-Sync fuer `comic_<e621id>_...` Pools: fehlende Posts importieren und Reihenfolge aktualisieren
-- laufende und abgeschlossene Jobs im Webinterface anzeigen
-- Konfiguration im Webinterface oder ueber Environment-Variablen
+- Search e621 by artist tag or arbitrary query
+- Show search results grouped by pools, videos, and all posts
+- Import single e621 posts into Szurubooru
+- Import complete e621 pools into Szurubooru
+- Create or update Szurubooru pools for imported e621 pools
+- Download e621 posts and pools to `/data/downloads`
+- Import e621 parent/child families and link them as relations
+- Import complete e621 queries, including `fav:<user>` favorite sync queries
+- Import Reddit posts, videos, and galleries into Szurubooru
+- Create basic Reddit tags automatically
+- Link Reddit gallery uploads as relations
+- Bulk upload local files with shared tags, safety, source, relations, and optional pool assignment
+- Scan Szurubooru for duplicates by `checksum` and `checksumMD5`
+- Sync imported `comic_<e621id>_...` pools by importing missing posts and updating order
+- Track running and completed jobs in the web UI
+- Configure credentials through the web UI or environment variables
 
-## Voraussetzungen
+## Requirements
 
 - Docker
-- Docker Compose oder Dockge
-- erreichbare Szurubooru-Instanz
-- optional: e621 Benutzername und API-Key, falls geschuetzte/gelimitete Inhalte importiert werden sollen
+- Docker Compose
+- A reachable Szurubooru instance
+- Optional: e621 username and API key for authenticated e621 access
 
-## Dateien
+## Project Layout
 
 ```text
 .
-├── Dockerfile
-├── compose.yaml
-├── package.json
-├── public/
-│   ├── app.js
-│   ├── index.html
-│   └── styles.css
-└── web/
-    └── server.js
+|-- Dockerfile
+|-- compose.yaml
+|-- package.json
+|-- public/
+|   |-- app.js
+|   |-- index.html
+|   `-- styles.css
+`-- web/
+    `-- server.js
 ```
 
-## Schnellstart mit Docker Compose
+## Quick Start
+
+Build and start the container:
 
 ```bash
 docker compose up -d --build
 ```
 
-Danach oeffnen:
+Open the web UI:
 
 ```text
 http://localhost:8080
 ```
 
-Auf einem Server oder NAS entsprechend:
+On a remote Docker host, replace `localhost` with the host address.
 
-```text
-http://<server-ip>:8080
+## Compose Setup
+
+The included `compose.yaml` uses a named volume for `/data`:
+
+```yaml
+services:
+  szurubooru-tools:
+    build:
+      context: ${APP_DIR:-.}
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - szurubooru-tools-data:/data
+
+volumes:
+  szurubooru-tools-data:
 ```
 
-## Installation auf Synology mit Dockge
+If your Compose runner starts from a different working directory, set `APP_DIR` to the absolute path of this repository:
 
-1. Dieses Repository oder den Ordner auf die Synology kopieren, zum Beispiel nach:
+```env
+APP_DIR=/opt/szurubooru-tools
+```
 
-   ```text
-   /volume1/docker/szurubooru-tools
-   ```
+In that directory, `Dockerfile`, `web/`, and `public/` must exist.
 
-2. In Dockge einen neuen Stack anlegen.
+## Configuration
 
-3. Als Compose-Inhalt die `compose.yaml` verwenden.
+Open the `Config` tab in the web UI and enter your Szurubooru and optional e621 credentials.
 
-4. Wenn Dockge die Compose-Datei nicht direkt aus dem App-Ordner ausfuehrt, im Stack unter Environment setzen:
-
-   ```env
-   APP_DIR=/volume1/docker/szurubooru-tools
-   ```
-
-   Wichtig: Der Pfad muss mit `/volume1/...` beginnen. Ohne fuehrenden Slash behandelt Docker ihn als relativen Pfad.
-
-5. Stack starten.
-
-6. Webinterface oeffnen:
-
-   ```text
-   http://<synology-ip>:8080
-   ```
-
-7. Im Tab `Config` Szurubooru und optional e621 eintragen.
-
-## Konfiguration
-
-Die Konfiguration kann im Webinterface gespeichert werden. Alternativ koennen die Werte als Environment-Variablen im Compose-Stack gesetzt werden.
-
-### Szurubooru
+You can also configure the app with environment variables:
 
 ```env
 SZURU_BASE_URL=http://<szurubooru-host>:<port>
 SZURU_USER=Importer
 SZURU_TOKEN=<szurubooru-api-token>
+E621_USER=<e621-user>
+E621_API_KEY=<e621-api-key>
 ```
 
-`SZURU_BASE_URL` muss aus Sicht des Containers erreichbar sein. Wenn Szurubooru auf derselben Synology laeuft, funktioniert oft eine LAN-IP:
-
-```env
-SZURU_BASE_URL=http://192.168.1.10:5200
-```
-
-Wenn beide Container im selben Docker-Netzwerk laufen, kann auch der Service-Name funktionieren:
+`SZURU_BASE_URL` must be reachable from inside the container. If Szurubooru runs on the same Docker network, a Compose service name can be used:
 
 ```env
 SZURU_BASE_URL=http://szurubooru:6666
 ```
 
-### e621
+If Szurubooru is exposed on the host network, use the host address and exposed port:
 
 ```env
-E621_USER=<e621-user>
-E621_API_KEY=<e621-api-key>
+SZURU_BASE_URL=http://192.168.1.10:5200
 ```
 
-Ohne e621-Zugang kann die Suche weiterhin fuer oeffentlich erreichbare Posts funktionieren. Fuer gesperrte oder authentifizierte Inhalte werden User und API-Key benoetigt.
+Without e621 credentials, public e621 search can still work, but restricted posts may be hidden.
 
-## Persistenz
+## Persistence
 
-Standardmaessig verwendet die Compose-Datei ein Docker-named-volume:
+The default Compose file stores runtime data in a Docker named volume:
 
 ```yaml
 volumes:
   - szurubooru-tools-data:/data
 ```
 
-Das vermeidet Dockge-Pfadprobleme und bleibt bei Container-Neustarts und Image-Updates erhalten.
+The web UI stores its saved config under:
 
-Downloads aus der Webapp landen ebenfalls in diesem Volume unter:
+```text
+/data/config.json
+```
+
+Downloads are stored under:
 
 ```text
 /data/downloads
 ```
 
-Wenn du stattdessen einen sichtbaren Synology-Ordner verwenden willst:
+If you prefer a bind mount, replace the named volume with an absolute host path:
 
 ```yaml
 volumes:
-  - /volume1/docker/szurubooru-tools/data:/data
+  - /opt/szurubooru-tools-data:/data
 ```
 
-Der fuehrende Slash ist wichtig.
+Use an absolute path. Relative bind paths depend on the Compose runner's working directory.
 
-## Port aendern
+## Changing the Port
 
-Host-Port links anpassen:
+Change the host port on the left side:
 
-```yaml
-ports:
-  - "8090:8080"
+```env
+HOST_PORT=8090
 ```
 
-Dann ist die App unter `http://<host>:8090` erreichbar.
+The app will then be available at:
 
-## Update
+```text
+http://<host>:8090
+```
 
-Bei Nutzung per Git:
+If you also change the internal container port, set both values:
+
+```env
+HOST_PORT=10000
+APP_PORT=10000
+```
+
+The included Compose file maps `${HOST_PORT}` to `${APP_PORT}`.
+
+## Usage
+
+### e621
+
+- `Suchen`: loads posts for an artist tag or e621 query.
+- `Query importieren`: imports the complete query. `fav:<user>` works as a favorite sync.
+- Pool table:
+  - `Import`: imports the complete e621 pool into Szurubooru.
+  - `Download`: downloads pool files to `/data/downloads`.
+  - `Sync`: imports missing posts and updates Szurubooru pool order.
+- Post table:
+  - `Import`: imports a single e621 post.
+  - `Familie`: imports parent/child posts and sets relations.
+
+### Reddit
+
+Imports direct Reddit images, videos, and galleries. External hosts such as Redgifs or Imgur are not implemented.
+
+### Bulk
+
+Uploads multiple local files. Shared tags, safety, source, relations, and an optional pool name can be set before upload.
+
+### Tools
+
+- `Familie importieren`: parent/child import for one e621 post ID.
+- `Post herunterladen`: downloads one e621 file to `/data/downloads/posts`.
+- `Pool-Sync`: checks or synchronizes imported e621 pools.
+- `Duplicate Scan`: groups Szurubooru posts by `checksum` and `checksumMD5`.
+
+## Updating
 
 ```bash
 git pull
 docker compose up -d --build
 ```
 
-In Dockge:
+The Docker volume with saved configuration remains untouched.
 
-1. Repository/Ordner aktualisieren.
-2. Stack neu bauen/starten.
+## GitHub Upload
 
-Das Docker-Volume mit der gespeicherten Konfiguration bleibt erhalten.
+Before publishing:
 
-## Bedienung
+- Do not commit real API tokens.
+- Do not commit `data/`.
+- Do not commit generated config files.
 
-### e621
-
-- `Suchen`: laedt Posts fuer einen Artist-Tag oder eine e621 Query.
-- `Query importieren`: importiert die komplette Query. Bei `fav:<user>` entspricht das dem Favoriten-Sync aus dem Windows-Tool.
-- In der Pool-Tabelle:
-  - `Import`: importiert den kompletten e621-Pool nach Szurubooru.
-  - `Download`: speichert die Pool-Dateien unter `/data/downloads`.
-  - `Sync`: importiert fehlende Posts und aktualisiert die Pool-Reihenfolge in Szurubooru.
-- In der Post-Tabelle:
-  - `Import`: importiert den einzelnen Post.
-  - `Familie`: importiert Parent/Child-Posts und setzt Relationen.
-
-### Reddit
-
-Importiert direkte Reddit-Bilder, Videos und Galerien. Externe Hoster wie Redgifs/Imgur sind nicht Ziel dieser Webapp.
-
-### Bulk
-
-Mehrere lokale Dateien hochladen. Gemeinsame Tags, Safety, Source, Relationen und optional ein Pool-Name koennen gesetzt werden.
-
-### Tools
-
-- `Familie importieren`: Parent/Child-Import fuer eine e621 Post-ID.
-- `Post herunterladen`: e621-Datei nach `/data/downloads/posts`.
-- `Pool-Sync`: Status pruefen oder bestimmte e621 Pool-IDs synchronisieren.
-- `Duplicate Scan`: gruppiert Szurubooru-Posts nach `checksum` und `checksumMD5`.
-
-## GitHub-Upload
-
-Vor dem Upload pruefen:
-
-- keine echten Tokens in `compose.yaml`
-- keine `data/` Ordner committen
-- keine lokalen `config.json` Dateien committen
-
-Empfohlen:
+Suggested first upload:
 
 ```bash
 git init
@@ -229,50 +228,45 @@ git push -u origin main
 
 ## Troubleshooting
 
-### `Bind mount failed ... /opt/stacks/.../volume1/...`
+### `Bind mount failed ... does not exist`
 
-Der Pfad wurde relativ interpretiert. Verwende entweder das named volume aus der mitgelieferten `compose.yaml` oder einen absoluten Pfad:
-
-```yaml
-volumes:
-  - /volume1/docker/szurubooru-tools/data:/data
-```
-
-Nicht:
+The bind mount path does not exist or was interpreted relative to the Compose runner's working directory. Prefer the included named volume or use an absolute host path:
 
 ```yaml
 volumes:
-  - volume1/docker/szurubooru-tools/data:/data
+  - /opt/szurubooru-tools-data:/data
 ```
 
 ### `failed to read dockerfile`
 
-Dockge findet den Build-Kontext nicht. Setze:
+The build context does not point at this repository. Set:
 
 ```env
-APP_DIR=/volume1/docker/szurubooru-tools
+APP_DIR=/absolute/path/to/szurubooru-tools
 ```
-
-In diesem Ordner muessen `Dockerfile`, `web/` und `public/` liegen.
 
 ### `COPY web: file not found`
 
-Es wurde nur die Compose-Datei kopiert, aber nicht der komplette App-Ordner.
+Only the Compose file was copied, not the full repository. The build context must include `Dockerfile`, `web/`, and `public/`.
 
-### Webinterface laedt, Import erreicht Szurubooru aber nicht
+### Logs show `npm error signal SIGTERM`
 
-`SZURU_BASE_URL` oder die im Webinterface gespeicherte Base URL ist aus Sicht des Containers nicht erreichbar. Verwende die LAN-IP der Synology oder den Docker-Service-Namen im gleichen Netzwerk.
+Rebuild the image. Versions before `1.1.1` started through `npm start`, which printed SIGTERM as an npm error when Docker stopped or recreated the container. The current Dockerfile starts Node directly.
 
-### Import meldet 401 oder 403
+### Web UI loads, but imports cannot reach Szurubooru
 
-Token oder Benutzerrechte in Szurubooru pruefen. Der User braucht Rechte zum Erstellen/Bearbeiten von Posts, Tags und Pools.
+`SZURU_BASE_URL` is not reachable from inside the container. Use a Docker service name on the same network or a host address reachable by containers.
 
-### e621-Suche liefert weniger als erwartet
+### Import returns 401 or 403
 
-e621 kann Inhalte ohne Authentifizierung ausblenden. e621 User und API-Key hinterlegen.
+Check the Szurubooru user and token. The user needs privileges to create and edit posts, tags, and pools.
 
-## Sicherheit
+### e621 search returns fewer posts than expected
 
-- Tokens nicht in ein oeffentliches Repository committen.
-- API-Keys besser in Dockge Environment-Variablen oder im Webinterface hinterlegen.
-- Das Webinterface hat aktuell keine eigene Anmeldung. Betreibe es nur in einem vertrauenswuerdigen Netzwerk oder hinter einem Reverse Proxy mit Authentifizierung.
+Set `E621_USER` and `E621_API_KEY`, or enter them in the web UI.
+
+## Security
+
+- Do not expose this UI publicly without authentication in front of it.
+- Keep API tokens out of public repositories.
+- Prefer environment variables or the web UI config for credentials.

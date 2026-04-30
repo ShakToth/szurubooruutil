@@ -13,4 +13,4 @@ COPY public ./public
 RUN mkdir -p /data/downloads
 
 EXPOSE 8080
-CMD ["npm", "start"]
+CMD ["node", "web/server.js"]
