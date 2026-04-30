@@ -117,6 +117,33 @@ function renderSearch(data) {
   ]);
 }
 
+function renderRule34Search(data) {
+  $("#rule34-summary").textContent = `${data.count} Posts fuer "${data.query}" gefunden.`;
+  fillTable("rule34-video-table", data.videos, [
+    (row) => row.id,
+    (row) => row.rating,
+    (row) => row.score,
+    (row) => row.ext,
+    (row) => actions(
+      actionButton("Import", () => startJob("/api/import/rule34-post", { postId: row.id })),
+      actionButton("Download", () => startJob("/api/download/rule34-post", { postId: row.id }))
+    )
+  ]);
+  fillTable("rule34-post-table", data.all, [
+    (row) => row.id,
+    (row) => row.type,
+    (row) => row.rating,
+    (row) => row.score,
+    (row) => row.ext,
+    (row) => actions(
+      actionButton("Import", () => startJob("/api/import/rule34-post", { postId: row.id })),
+      actionButton("Familie", () => startJob("/api/import/rule34-family", { postId: row.id })),
+      actionButton("Download", () => startJob("/api/download/rule34-post", { postId: row.id })),
+      link("rule34", row.url)
+    )
+  ]);
+}
+
 function showTab(id) {
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === id));
   $$(".view").forEach((view) => view.classList.toggle("active", view.id === id));
@@ -128,6 +155,7 @@ async function loadConfig() {
   form.szuruBaseUrl.value = config.szurubooru.baseUrl || "";
   form.szuruUser.value = config.szurubooru.userName || "";
   form.e621User.value = config.e621.userName || "";
+  form.rule34UserId.value = config.rule34?.userId || "";
 }
 
 async function loadJobs() {
@@ -177,6 +205,19 @@ $("#e621-search").addEventListener("submit", async (event) => {
   }
 });
 
+$("#rule34-search").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = event.currentTarget.query.value.trim();
+  if (!query) return;
+  $("#rule34-summary").textContent = "Suche laeuft...";
+  try {
+    renderRule34Search(await api(`/api/search/rule34?q=${encodeURIComponent(query)}`));
+  } catch (error) {
+    toast(error.message);
+    $("#rule34-summary").textContent = "";
+  }
+});
+
 $("#reddit-import").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -187,6 +228,12 @@ $("#import-query").addEventListener("click", async () => {
   const query = $("#e621-search").query.value.trim();
   if (!query) return toast("Query fehlt.");
   await startJob("/api/import/e621-query", { query });
+});
+
+$("#import-rule34-query").addEventListener("click", async () => {
+  const query = $("#rule34-search").query.value.trim();
+  if (!query) return toast("Query fehlt.");
+  await startJob("/api/import/rule34-query", { query });
 });
 
 $("#bulk-upload").addEventListener("submit", async (event) => {
@@ -242,11 +289,16 @@ $("#config-form").addEventListener("submit", async (event) => {
       e621: {
         userName: form.e621User.value.trim(),
         apiKey: form.e621ApiKey.value
+      },
+      rule34: {
+        userId: form.rule34UserId.value.trim(),
+        apiKey: form.rule34ApiKey.value
       }
     })
   });
   form.szuruToken.value = "";
   form.e621ApiKey.value = "";
+  form.rule34ApiKey.value = "";
   toast("Konfiguration gespeichert.");
 });
 

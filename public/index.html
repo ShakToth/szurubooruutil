@@ -11,6 +11,7 @@
       <h1>Szurubooru Tools</h1>
       <nav>
         <button class="tab active" data-tab="e621">e621</button>
+        <button class="tab" data-tab="rule34">rule34.xxx</button>
         <button class="tab" data-tab="reddit">Reddit</button>
         <button class="tab" data-tab="bulk">Bulk</button>
         <button class="tab" data-tab="tools">Tools</button>
@@ -51,6 +52,35 @@
             <div class="table-wrap">
               <table id="post-table">
                 <thead><tr><th>ID</th><th>Typ</th><th>Rating</th><th>Score</th><th>Favs</th><th>Aktionen</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="rule34" class="view">
+        <form id="rule34-search" class="toolbar">
+          <input name="query" placeholder="tag_a tag_b oder rule34.xxx Query" autocomplete="off">
+          <button>Suchen</button>
+          <button type="button" id="import-rule34-query">Query importieren</button>
+        </form>
+        <div class="summary" id="rule34-summary"></div>
+        <div class="tables">
+          <section>
+            <h2>Videos</h2>
+            <div class="table-wrap">
+              <table id="rule34-video-table">
+                <thead><tr><th>ID</th><th>Rating</th><th>Score</th><th>Typ</th><th>Aktionen</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>Alle Posts</h2>
+            <div class="table-wrap">
+              <table id="rule34-post-table">
+                <thead><tr><th>ID</th><th>Typ</th><th>Rating</th><th>Score</th><th>Ext</th><th>Aktionen</th></tr></thead>
                 <tbody></tbody>
               </table>
             </div>
@@ -127,6 +157,9 @@
           <h2>e621</h2>
           <label>User<input name="e621User"></label>
           <label>API Key<input name="e621ApiKey" type="password" placeholder="leer lassen = behalten"></label>
+          <h2>rule34.xxx</h2>
+          <label>User ID<input name="rule34UserId"></label>
+          <label>API Key<input name="rule34ApiKey" type="password" placeholder="leer lassen = behalten"></label>
           <button>Speichern</button>
         </form>
       </section>

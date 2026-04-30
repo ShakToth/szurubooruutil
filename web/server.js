@@ -11,6 +11,10 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(DATA_DIR, "downloads");
 const PORT = Number(process.env.PORT || 8080);
 const MAX_E621_PAGES = Number(process.env.MAX_E621_PAGES || 20);
+const MAX_RULE34_PAGES = Number(process.env.MAX_RULE34_PAGES || 20);
+const E621_PAGE_DELAY_MS = Number(process.env.E621_PAGE_DELAY_MS || 1800);
+const E621_RETRY_COUNT = Number(process.env.E621_RETRY_COUNT || 5);
+const E621_RETRY_BASE_MS = Number(process.env.E621_RETRY_BASE_MS || 5000);
 
 const jobs = new Map();
 
@@ -54,6 +58,10 @@ async function loadConfig() {
     e621: {
       userName: process.env.E621_USER || fileConfig.e621?.userName || "",
       apiKey: process.env.E621_API_KEY || fileConfig.e621?.apiKey || ""
+    },
+    rule34: {
+      userId: process.env.RULE34_USER_ID || fileConfig.rule34?.userId || "",
+      apiKey: process.env.RULE34_API_KEY || fileConfig.rule34?.apiKey || ""
     }
   };
 }
@@ -73,6 +81,10 @@ function publicConfig(config) {
     e621: {
       userName: config.e621.userName,
       hasApiKey: Boolean(config.e621.apiKey)
+    },
+    rule34: {
+      userId: config.rule34.userId,
+      hasApiKey: Boolean(config.rule34.apiKey)
     }
   };
 }
@@ -86,6 +98,19 @@ function e621Headers(config) {
     headers.authorization = `Basic ${Buffer.from(`${config.e621.userName}:${config.e621.apiKey}`).toString("base64")}`;
   }
   return headers;
+}
+
+function rule34Headers() {
+  return {
+    "user-agent": "SzurubooruToolsWeb/1.0"
+  };
+}
+
+function addRule34Auth(url, config) {
+  if (config.rule34?.userId && config.rule34?.apiKey) {
+    url.searchParams.set("user_id", config.rule34.userId);
+    url.searchParams.set("api_key", config.rule34.apiKey);
+  }
 }
 
 function szuruHeaders(config, extra = {}) {
@@ -109,6 +134,32 @@ async function fetchJson(url, options = {}) {
     throw new Error(`HTTP ${response.status} fuer ${url}: ${body.slice(0, 300)}`);
   }
   return response.json();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchJsonWithRetry(url, options = {}, retryOptions = {}) {
+  const retries = retryOptions.retries ?? 3;
+  const baseDelayMs = retryOptions.baseDelayMs ?? 2000;
+  const retryStatuses = new Set(retryOptions.statuses || [429, 500, 502, 503, 504]);
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const response = await fetch(url, options);
+    if (response.ok) return response.json();
+
+    const body = await response.text().catch(() => "");
+    lastError = new Error(`HTTP ${response.status} fuer ${url}: ${body.slice(0, 300)}`);
+    if (!retryStatuses.has(response.status) || attempt === retries) break;
+
+    const retryAfter = Number(response.headers.get("retry-after") || 0);
+    const delayMs = retryAfter > 0 ? retryAfter * 1000 : baseDelayMs * (attempt + 1);
+    await sleep(delayMs);
+  }
+
+  throw lastError;
 }
 
 async function szuruJson(config, method, route, body) {
@@ -161,7 +212,7 @@ function rowFromPost(post) {
   };
 }
 
-async function searchE621(query, config) {
+async function searchE621(query, config, log = null) {
   const posts = [];
   let page = 1;
   while (page <= MAX_E621_PAGES) {
@@ -169,12 +220,17 @@ async function searchE621(query, config) {
     url.searchParams.set("tags", query);
     url.searchParams.set("limit", "320");
     url.searchParams.set("page", String(page));
-    const response = await fetchJson(url, { headers: e621Headers(config) });
+    log?.(`Lade e621-Suchseite ${page}...`);
+    const response = await fetchJsonWithRetry(url, { headers: e621Headers(config) }, {
+      retries: E621_RETRY_COUNT,
+      baseDelayMs: E621_RETRY_BASE_MS,
+      statuses: [429, 503]
+    });
     const batch = response.posts || [];
     posts.push(...batch);
     if (batch.length < 320) break;
     page += 1;
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    await sleep(E621_PAGE_DELAY_MS);
   }
 
   const rows = posts.map(rowFromPost);
@@ -220,6 +276,88 @@ async function getE621Post(id, config) {
 
 async function getE621Pool(id, config) {
   return fetchJson(`https://e621.net/pools/${Number(id)}.json`, { headers: e621Headers(config) });
+}
+
+function rule34PostUrl(id) {
+  return `https://rule34.xxx/index.php?page=post&s=view&id=${Number(id)}`;
+}
+
+function rule34FileExt(post) {
+  const candidate = post.file_url || post.image || "";
+  try {
+    const ext = path.extname(new URL(candidate).pathname).replace(".", "").toLowerCase();
+    return ext || "bin";
+  } catch {
+    return "bin";
+  }
+}
+
+function rule34PostKind(post) {
+  const ext = rule34FileExt(post);
+  if (["webm", "mp4", "mov"].includes(ext)) return "Video";
+  if (post.parent_id && String(post.parent_id) !== "0") return "Parent/Child";
+  return "Post";
+}
+
+function rule34RowFromPost(post) {
+  return {
+    id: Number(post.id),
+    type: rule34PostKind(post),
+    rating: post.rating || "",
+    score: Number(post.score || 0),
+    favorites: 0,
+    pools: [],
+    parentId: Number(post.parent_id || 0) || null,
+    childCount: 0,
+    ext: rule34FileExt(post),
+    url: rule34PostUrl(post.id),
+    fileUrl: post.file_url || post.image || ""
+  };
+}
+
+async function searchRule34(query, config) {
+  const posts = [];
+  let page = 0;
+  while (page < MAX_RULE34_PAGES) {
+    const url = new URL("https://api.rule34.xxx/index.php");
+    url.searchParams.set("page", "dapi");
+    url.searchParams.set("s", "post");
+    url.searchParams.set("q", "index");
+    url.searchParams.set("json", "1");
+    url.searchParams.set("limit", "1000");
+    url.searchParams.set("pid", String(page));
+    url.searchParams.set("tags", query);
+    addRule34Auth(url, config);
+    const response = await fetchJson(url, { headers: rule34Headers() });
+    const batch = Array.isArray(response) ? response : response.post ? [response.post].flat() : [];
+    posts.push(...batch);
+    if (batch.length < 1000) break;
+    page += 1;
+    await new Promise((resolve) => setTimeout(resolve, 650));
+  }
+  const rows = posts.map(rule34RowFromPost);
+  return {
+    query,
+    count: rows.length,
+    all: rows,
+    pools: [],
+    videos: rows.filter((row) => row.type === "Video"),
+    relations: rows.filter((row) => row.parentId || row.childCount)
+  };
+}
+
+async function getRule34Post(id, config) {
+  const url = new URL("https://api.rule34.xxx/index.php");
+  url.searchParams.set("page", "dapi");
+  url.searchParams.set("s", "post");
+  url.searchParams.set("q", "index");
+  url.searchParams.set("json", "1");
+  url.searchParams.set("id", String(Number(id)));
+  addRule34Auth(url, config);
+  const response = await fetchJson(url, { headers: rule34Headers() });
+  const posts = Array.isArray(response) ? response : response.post ? [response.post].flat() : [];
+  if (!posts.length) throw new Error(`rule34.xxx Post ${id} wurde nicht gefunden.`);
+  return posts[0];
 }
 
 async function getTagCategories(config) {
@@ -423,11 +561,63 @@ async function importE621Post(config, postId, extraTags = []) {
   return { id: created.id, action: "created", source };
 }
 
+async function importRule34Post(config, postId, extraTags = []) {
+  const post = await getRule34Post(postId, config);
+  const source = rule34PostUrl(post.id);
+  const categories = await getTagCategories(config);
+  const tags = [];
+  for (const tag of String(post.tags || "").split(/\s+/).filter(Boolean)) {
+    const ensured = await ensureTag(config, tag, categories.general);
+    if (ensured) tags.push(ensured);
+  }
+  for (const tag of extraTags) {
+    const ensured = await ensureTag(config, tag, categories.general);
+    if (ensured) tags.push(ensured);
+  }
+  const uniqueTags = [...new Set(tags)];
+
+  const sourceMatch = await findPostBySource(config, source);
+  if (sourceMatch) {
+    await updatePost(config, sourceMatch, { tags: uniqueTags, source });
+    return { id: sourceMatch.id, action: "updated", source };
+  }
+
+  const fileUrl = post.file_url || post.image || "";
+  if (!fileUrl) return { id: 0, action: "skipped", source, reason: "Keine Datei-URL vorhanden" };
+  const { buffer, contentType } = await downloadBuffer(fileUrl, rule34Headers());
+  const checksum = createHash("sha1").update(buffer).digest("hex");
+  const checksumMatch = await findPostByChecksum(config, checksum);
+  if (checksumMatch) {
+    await updatePost(config, checksumMatch, { tags: uniqueTags, source });
+    return { id: checksumMatch.id, action: "updated", source };
+  }
+
+  const metadata = {
+    tags: uniqueTags,
+    safety: "unsafe",
+    source,
+    relations: [],
+    notes: [],
+    flags: []
+  };
+  const created = await uploadToSzuru(config, metadata, buffer, `rule34-${post.id}.${rule34FileExt(post)}`, contentType);
+  return { id: created.id, action: "created", source };
+}
+
 async function getE621FamilyPostIds(config, postId) {
   const post = await getE621Post(postId, config);
   const ids = new Set([Number(post.id)]);
   if (post.relationships?.parent_id) ids.add(Number(post.relationships.parent_id));
   for (const childId of post.relationships?.children || []) ids.add(Number(childId));
+  return [...ids].filter((id) => id > 0).sort((a, b) => a - b);
+}
+
+async function getRule34FamilyPostIds(config, postId) {
+  const post = await getRule34Post(postId, config);
+  const ids = new Set([Number(post.id)]);
+  if (post.parent_id && String(post.parent_id) !== "0") ids.add(Number(post.parent_id));
+  const children = await searchRule34(`parent:${Number(post.id)}`, config);
+  for (const child of children.all) ids.add(Number(child.id));
   return [...ids].filter((id) => id > 0).sort((a, b) => a - b);
 }
 
@@ -439,6 +629,26 @@ async function importE621PostSet(config, postIds, contextName, log) {
     log(`${contextName}: importiere Post ${index + 1}/${postIds.length}: ${postId}`);
     try {
       imported.push(await importE621Post(config, postId));
+    } catch (error) {
+      failed.push({ id: postId, error: error.message });
+      log(`Fehler bei Post ${postId}: ${error.message}`);
+    }
+  }
+  const ids = imported.map((item) => item.id).filter((id) => id > 0);
+  if (ids.length > 1) {
+    for (const id of ids) await setPostRelations(config, id, ids.filter((otherId) => otherId !== id));
+  }
+  return { contextName, imported, failed };
+}
+
+async function importRule34PostSet(config, postIds, contextName, log) {
+  const imported = [];
+  const failed = [];
+  for (let index = 0; index < postIds.length; index += 1) {
+    const postId = Number(postIds[index]);
+    log(`${contextName}: importiere Post ${index + 1}/${postIds.length}: ${postId}`);
+    try {
+      imported.push(await importRule34Post(config, postId));
     } catch (error) {
       failed.push({ id: postId, error: error.message });
       log(`Fehler bei Post ${postId}: ${error.message}`);
@@ -503,9 +713,19 @@ async function downloadE621Post(config, postId, log) {
   return { id: post.id, ...(await saveUrlToFile(post.file.url, e621Headers(config), targetPath)) };
 }
 
+async function downloadRule34Post(config, postId, log) {
+  const post = await getRule34Post(postId, config);
+  const fileUrl = post.file_url || post.image || "";
+  if (!fileUrl) throw new Error("Keine Datei-URL vorhanden.");
+  const fileName = safeFileName(`rule34_${post.id}.${rule34FileExt(post)}`);
+  const targetPath = path.join(DOWNLOAD_DIR, "rule34", fileName);
+  log(`Lade ${fileName}`);
+  return { id: Number(post.id), ...(await saveUrlToFile(fileUrl, rule34Headers(), targetPath)) };
+}
+
 async function importE621Query(config, query, log) {
   if (!query) throw new Error("Query fehlt.");
-  const result = await searchE621(query, config);
+  const result = await searchE621(query, config, log);
   const poolIds = result.pools.filter((pool) => pool.available).map((pool) => pool.id);
   const standalonePostIds = result.all.filter((row) => !row.pools.length).map((row) => row.id);
   const pools = [];
@@ -527,6 +747,25 @@ async function importE621Query(config, query, log) {
     }
   }
   return { query, pools, posts, failed };
+}
+
+async function importRule34Query(config, query, log) {
+  if (!query) throw new Error("Query fehlt.");
+  const result = await searchRule34(query, config);
+  const posts = [];
+  const failed = [];
+  log(`${result.count} rule34.xxx Treffer.`);
+  for (let index = 0; index < result.all.length; index += 1) {
+    const postId = result.all[index].id;
+    log(`Importiere rule34.xxx Post ${index + 1}/${result.all.length}: ${postId}`);
+    try {
+      posts.push(await importRule34Post(config, postId));
+    } catch (error) {
+      failed.push({ type: "post", id: postId, error: error.message });
+      log(`Fehler bei Post ${postId}: ${error.message}`);
+    }
+  }
+  return { query, posts, failed };
 }
 
 function postSummary(post) {
@@ -824,6 +1063,10 @@ const server = http.createServer(async (req, res) => {
         e621: {
           userName: body.e621?.userName ?? current.e621.userName,
           apiKey: body.e621?.apiKey || current.e621.apiKey
+        },
+        rule34: {
+          userId: body.rule34?.userId ?? current.rule34.userId,
+          apiKey: body.rule34?.apiKey || current.rule34.apiKey
         }
       };
       await saveConfig(next);
@@ -833,6 +1076,11 @@ const server = http.createServer(async (req, res) => {
       const query = url.searchParams.get("q")?.trim();
       if (!query) return jsonResponse(res, 400, { error: "Query fehlt." });
       return jsonResponse(res, 200, await searchE621(query, await loadConfig()));
+    }
+    if (url.pathname === "/api/search/rule34" && req.method === "GET") {
+      const query = url.searchParams.get("q")?.trim();
+      if (!query) return jsonResponse(res, 400, { error: "Query fehlt." });
+      return jsonResponse(res, 200, await searchRule34(query, await loadConfig()));
     }
     if (url.pathname === "/api/jobs" && req.method === "GET") {
       return jsonResponse(res, 200, [...jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
@@ -872,6 +1120,31 @@ const server = http.createServer(async (req, res) => {
       const job = startJob("e621-query", { query }, (log) => importE621Query(config, query, log));
       return jsonResponse(res, 202, job);
     }
+    if (url.pathname === "/api/import/rule34-post" && req.method === "POST") {
+      const body = await readJson(req);
+      const config = await loadConfig();
+      const job = startJob("rule34-post", { postId: Number(body.postId) }, (log) => {
+        log(`Importiere rule34.xxx Post ${body.postId}`);
+        return importRule34Post(config, Number(body.postId), body.tags || []);
+      });
+      return jsonResponse(res, 202, job);
+    }
+    if (url.pathname === "/api/import/rule34-family" && req.method === "POST") {
+      const body = await readJson(req);
+      const config = await loadConfig();
+      const job = startJob("rule34-family", { postId: Number(body.postId) }, async (log) => {
+        const ids = await getRule34FamilyPostIds(config, Number(body.postId));
+        return importRule34PostSet(config, ids, `rule34.xxx Familie zu ${body.postId}`, log);
+      });
+      return jsonResponse(res, 202, job);
+    }
+    if (url.pathname === "/api/import/rule34-query" && req.method === "POST") {
+      const body = await readJson(req);
+      const config = await loadConfig();
+      const query = String(body.query || "").trim();
+      const job = startJob("rule34-query", { query }, (log) => importRule34Query(config, query, log));
+      return jsonResponse(res, 202, job);
+    }
     if (url.pathname === "/api/download/e621-pool" && req.method === "POST") {
       const body = await readJson(req);
       const config = await loadConfig();
@@ -882,6 +1155,12 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const config = await loadConfig();
       const job = startJob("download-post", { postId: Number(body.postId) }, (log) => downloadE621Post(config, Number(body.postId), log));
+      return jsonResponse(res, 202, job);
+    }
+    if (url.pathname === "/api/download/rule34-post" && req.method === "POST") {
+      const body = await readJson(req);
+      const config = await loadConfig();
+      const job = startJob("download-rule34-post", { postId: Number(body.postId) }, (log) => downloadRule34Post(config, Number(body.postId), log));
       return jsonResponse(res, 202, job);
     }
     if (url.pathname === "/api/import/reddit" && req.method === "POST") {
