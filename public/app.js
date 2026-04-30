@@ -158,37 +158,69 @@ async function loadConfig() {
   form.rule34UserId.value = config.rule34?.userId || "";
 }
 
-async function loadJobs() {
+function jobBody(job) {
+  const log = job.logs.map((entry) => `[${new Date(entry.at).toLocaleTimeString()}] ${entry.message}`).join("\n");
+  const details = job.details && Object.keys(job.details).length ? JSON.stringify(job.details, null, 2) : "";
+  const result = job.result === null || job.result === undefined ? "" : JSON.stringify(job.result, null, 2);
+  return [details && `Details:\n${details}`, log && `Logs:\n${log}`, result && `Result:\n${result}`]
+    .filter(Boolean)
+    .join("\n\n") || (job.status === "running" ? "Job laeuft. Warte auf Logausgabe..." : "Keine Ausgabe.");
+}
+
+function renderJob(job) {
+  const node = document.createElement("article");
+  node.className = "job";
+  node.dataset.jobId = job.id;
+  node.innerHTML = `
+    <header>
+      <strong data-role="type"></strong>
+      <span data-role="status"></span>
+    </header>
+    <p data-role="id"></p>
+    <p data-role="error" class="status-error"></p>
+    <pre></pre>
+  `;
+  updateJobNode(node, job);
+  return node;
+}
+
+function updateJobNode(node, job) {
+  const pre = $("pre", node);
+  const wasAtBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 8;
+  const previousScrollTop = pre.scrollTop;
+  $('[data-role="type"]', node).textContent = job.type;
+  const status = $('[data-role="status"]', node);
+  status.className = `status-${job.status}`;
+  status.textContent = job.status;
+  $('[data-role="id"]', node).textContent = job.id;
+  const error = $('[data-role="error"]', node);
+  error.textContent = job.error || "";
+  error.style.display = job.error ? "" : "none";
+  pre.textContent = jobBody(job);
+  if (wasAtBottom) pre.scrollTop = pre.scrollHeight;
+  else pre.scrollTop = previousScrollTop;
+}
+
+async function loadJobs({ preserveScroll = true } = {}) {
   const jobs = await api("/api/jobs");
   const list = $("#job-list");
-  list.replaceChildren();
-  for (const job of jobs) {
-    const node = document.createElement("article");
-    node.className = "job";
-    const log = job.logs.map((entry) => `[${new Date(entry.at).toLocaleTimeString()}] ${entry.message}`).join("\n");
-    const details = job.details && Object.keys(job.details).length ? JSON.stringify(job.details, null, 2) : "";
-    const result = job.result === null || job.result === undefined ? "" : JSON.stringify(job.result, null, 2);
-    const body = [details && `Details:\n${details}`, log && `Logs:\n${log}`, result && `Result:\n${result}`]
-      .filter(Boolean)
-      .join("\n\n") || (job.status === "running" ? "Job laeuft. Warte auf Logausgabe..." : "Keine Ausgabe.");
-    node.innerHTML = `
-      <header>
-        <strong>${job.type}</strong>
-        <span class="status-${job.status}">${job.status}</span>
-      </header>
-      <p>${job.id}</p>
-      ${job.error ? `<p class="status-error">${job.error}</p>` : ""}
-      <pre></pre>
-    `;
-    $("pre", node).textContent = body;
-    list.append(node);
+  const existing = new Map($$(".job", list).map((node) => [node.dataset.jobId, node]));
+  const desiredIds = new Set(jobs.map((job) => job.id));
+  for (const node of $$(".job", list)) {
+    if (!desiredIds.has(node.dataset.jobId)) node.remove();
   }
+  for (const job of jobs) {
+    const node = existing.get(job.id) || renderJob(job);
+    if (existing.has(job.id)) updateJobNode(node, job);
+    if (node.parentElement !== list) list.append(node);
+  }
+  if (!preserveScroll) list.scrollIntoView({ block: "start" });
 }
 
 $$(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     showTab(tab.dataset.tab);
-    if (tab.dataset.tab === "jobs") loadJobs().catch((error) => toast(error.message));
+    if (tab.dataset.tab === "jobs") loadJobs({ preserveScroll: true }).catch((error) => toast(error.message));
   });
 });
 
@@ -302,10 +334,10 @@ $("#config-form").addEventListener("submit", async (event) => {
   toast("Konfiguration gespeichert.");
 });
 
-$("#refresh-jobs").addEventListener("click", () => loadJobs().catch((error) => toast(error.message)));
+$("#refresh-jobs").addEventListener("click", () => loadJobs({ preserveScroll: true }).catch((error) => toast(error.message)));
 
 setInterval(() => {
-  if ($("#jobs").classList.contains("active")) loadJobs().catch(() => {});
+  if ($("#jobs").classList.contains("active")) loadJobs({ preserveScroll: true }).catch(() => {});
 }, 5000);
 
 loadConfig().catch((error) => toast(error.message));

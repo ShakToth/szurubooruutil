@@ -119,6 +119,7 @@ function szuruHeaders(config, extra = {}) {
   }
   return {
     authorization: `Token ${Buffer.from(`${config.szurubooru.userName}:${config.szurubooru.token}`).toString("base64")}`,
+    accept: "application/json",
     ...extra
   };
 }
