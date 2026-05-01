@@ -10,6 +10,7 @@ COPY package.json ./
 COPY web ./web
 COPY public ./public
 
+RUN apk add --no-cache imagemagick
 RUN mkdir -p /data/downloads
 
 EXPOSE 8080

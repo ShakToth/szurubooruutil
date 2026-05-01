@@ -1,8 +1,11 @@
 import http from "node:http";
+import { execFile } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -15,6 +18,7 @@ const MAX_RULE34_PAGES = Number(process.env.MAX_RULE34_PAGES || 20);
 const E621_PAGE_DELAY_MS = Number(process.env.E621_PAGE_DELAY_MS || 1800);
 const E621_RETRY_COUNT = Number(process.env.E621_RETRY_COUNT || 5);
 const E621_RETRY_BASE_MS = Number(process.env.E621_RETRY_BASE_MS || 5000);
+const execFileAsync = promisify(execFile);
 
 const jobs = new Map();
 
@@ -173,7 +177,7 @@ async function szuruJson(config, method, route, body) {
 }
 
 function safeTagName(name) {
-  return String(name || "")
+  const tag = String(name || "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "_")
@@ -181,6 +185,7 @@ function safeTagName(name) {
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 190);
+  return /[a-z0-9]/.test(tag) ? tag : "";
 }
 
 function postSafety(rating) {
@@ -466,7 +471,7 @@ async function saveUrlToFile(url, headers, targetPath) {
   return { path: targetPath, size: buffer.length, contentType };
 }
 
-async function uploadToSzuru(config, metadata, buffer, filename, contentType) {
+async function postSzuruContent(config, metadata, buffer, filename, contentType) {
   const form = new FormData();
   form.append("metadata", JSON.stringify(metadata));
   form.append("content", new Blob([buffer], { type: contentType }), filename);
@@ -477,6 +482,66 @@ async function uploadToSzuru(config, metadata, buffer, filename, contentType) {
   });
   if (!response.ok) throw new Error(`Szurubooru-Upload fehlgeschlagen: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
   return response.json();
+}
+
+function isSzuruImageMetadataError(error) {
+  const message = String(error?.message || "");
+  return message.includes("InvalidPostContentError") && message.includes("Unable to process image metadata");
+}
+
+function uploadExtension(filename, contentType) {
+  const fromName = path.extname(filename || "").replace(".", "").toLowerCase();
+  if (fromName) return fromName;
+  const fromType = String(contentType || "").split("/").at(1)?.split(";").at(0)?.toLowerCase();
+  return fromType || "bin";
+}
+
+function canRepairImageUpload(filename, contentType) {
+  const ext = uploadExtension(filename, contentType);
+  return String(contentType || "").startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp"].includes(ext);
+}
+
+async function repairImageForSzuru(buffer, filename, contentType) {
+  if (!canRepairImageUpload(filename, contentType)) return null;
+
+  const inputExt = uploadExtension(filename, contentType);
+  const outputExt = inputExt === "gif" ? "gif" : inputExt === "jpg" || inputExt === "jpeg" ? "jpg" : inputExt === "png" ? "png" : "png";
+  const outputType = outputExt === "jpg" ? "image/jpeg" : outputExt === "gif" ? "image/gif" : "image/png";
+  const workDir = await mkdtemp(path.join(tmpdir(), "szuru-upload-"));
+  const inputPath = path.join(workDir, `input.${inputExt || "bin"}`);
+  const outputPath = path.join(workDir, `output.${outputExt}`);
+
+  try {
+    await writeFile(inputPath, buffer);
+    const args = outputExt === "gif"
+      ? [inputPath, "-coalesce", "-strip", outputPath]
+      : [inputPath, "-auto-orient", "-strip", outputPath];
+    await execFileAsync("magick", args, { timeout: 120000, maxBuffer: 1024 * 1024 });
+    return {
+      buffer: await readFile(outputPath),
+      filename: `${safeFileName(path.basename(filename || "upload", path.extname(filename || "")))}.repaired.${outputExt}`,
+      contentType: outputType
+    };
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
+async function uploadToSzuru(config, metadata, buffer, filename, contentType) {
+  try {
+    return await postSzuruContent(config, metadata, buffer, filename, contentType);
+  } catch (error) {
+    if (!isSzuruImageMetadataError(error)) throw error;
+
+    try {
+      const repaired = await repairImageForSzuru(buffer, filename, contentType);
+      if (!repaired) throw error;
+      return await postSzuruContent(config, metadata, repaired.buffer, repaired.filename, repaired.contentType);
+    } catch (repairError) {
+      if (repairError === error) throw error;
+      throw new Error(`${error.message} | Reparaturversuch fehlgeschlagen: ${repairError.message}`);
+    }
+  }
 }
 
 async function importLocalBufferToSzuru(config, buffer, filename, contentType, tags, safety, source, relationIds = []) {
