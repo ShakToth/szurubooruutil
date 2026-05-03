@@ -25,6 +25,7 @@ The app is a small dependency-free Node.js service with a browser UI. It does no
 - Scan Szurubooru for duplicates by `checksum` and `checksumMD5`
 - Sync imported `comic_<e621id>_...` pools by importing missing posts and updating order
 - Track running and completed jobs in the web UI
+- Schedule supported imports and maintenance tools to repeat every X days
 - Configure credentials through the web UI or environment variables
 
 ## Requirements
@@ -155,6 +156,12 @@ The web UI stores its saved config under:
 /data/config.json
 ```
 
+Recurring schedules are stored under:
+
+```text
+/data/schedules.json
+```
+
 Downloads are stored under:
 
 ```text
@@ -209,6 +216,19 @@ Uploads multiple local files. Shared tags, safety, source, relations, and an opt
 - `Post herunterladen`: downloads one e621 file to `/data/downloads/posts`.
 - `Pool-Sync`: checks or synchronizes imported e621 pools.
 - `Duplicate Scan`: groups Szurubooru posts by `checksum` and `checksumMD5`.
+
+### Scheduler
+
+The `Scheduler` tab can repeat selected processes every X days. Schedules are restored when the container restarts and can be paused, deleted, or run immediately from the UI.
+
+Supported scheduled processes:
+
+- e621 query import, including `fav:<user>` favorite sync queries
+- rule34.xxx query import
+- e621 pool import
+- e621 pool sync
+- pool sync status check
+- duplicate scan
 
 ## Troubleshooting
 

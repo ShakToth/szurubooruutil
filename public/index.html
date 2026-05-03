@@ -15,6 +15,7 @@
         <button class="tab" data-tab="reddit">Reddit</button>
         <button class="tab" data-tab="bulk">Bulk</button>
         <button class="tab" data-tab="tools">Tools</button>
+        <button class="tab" data-tab="scheduler">Scheduler</button>
         <button class="tab" data-tab="jobs">Jobs</button>
         <button class="tab" data-tab="config">Config</button>
       </nav>
@@ -146,6 +147,35 @@
       <section id="jobs" class="view">
         <div class="toolbar"><button id="refresh-jobs">Aktualisieren</button></div>
         <div id="job-list" class="job-list"></div>
+      </section>
+
+      <section id="scheduler" class="view">
+        <div class="scheduler-layout">
+          <form id="schedule-form" class="stack">
+            <h2>Wiederkehrenden Prozess anlegen</h2>
+            <label>Name<input name="name" placeholder="Favoriten-Sync"></label>
+            <label>Prozess<select name="taskType"></select></label>
+            <label id="schedule-query-field">Query<input name="query" placeholder="fav:user oder tag_a tag_b"></label>
+            <label id="schedule-pool-id-field">e621 Pool-ID<input name="poolId" inputmode="numeric"></label>
+            <label id="schedule-pool-ids-field">e621 Pool-IDs<input name="poolIds" placeholder="123, 456"></label>
+            <label>Alle X Tage<input name="intervalDays" type="number" min="1" value="1"></label>
+            <label>Naechster Start<input name="nextRunAt" type="datetime-local"></label>
+            <label class="inline"><input name="enabled" type="checkbox" checked> Aktiv</label>
+            <button>Schedule speichern</button>
+          </form>
+          <section>
+            <div class="toolbar">
+              <h2>Schedules</h2>
+              <button type="button" id="refresh-schedules">Aktualisieren</button>
+            </div>
+            <div class="table-wrap">
+              <table id="schedule-table">
+                <thead><tr><th>Name</th><th>Prozess</th><th>Intervall</th><th>Naechster Start</th><th>Letzter Job</th><th>Aktionen</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </section>
 
       <section id="config" class="view">

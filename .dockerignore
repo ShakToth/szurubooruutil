@@ -1,0 +1,11 @@
+data
+downloads
+reports
+uploads
+*.cmd
+*.ps1
+*config.json
+README-*.md
+node_modules
+.git
+.gitignore

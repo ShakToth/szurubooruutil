@@ -217,10 +217,83 @@ async function loadJobs({ preserveScroll = true } = {}) {
   if (!preserveScroll) list.scrollIntoView({ block: "start" });
 }
 
+function toLocalDateTimeValue(iso) {
+  const date = iso ? new Date(iso) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fromLocalDateTimeValue(value) {
+  return value ? new Date(value).toISOString() : null;
+}
+
+function scheduleDetails(form) {
+  if (form.taskType.value === "e621-query" || form.taskType.value === "rule34-query") {
+    return { query: form.query.value.trim() };
+  }
+  if (form.taskType.value === "e621-pool") {
+    return { poolId: Number(form.poolId.value) };
+  }
+  if (form.taskType.value === "pool-sync") {
+    return { poolIds: form.poolIds.value.split(/[^0-9]+/).filter(Boolean).map(Number) };
+  }
+  return {};
+}
+
+function syncScheduleFields() {
+  const type = $("#schedule-form").taskType.value;
+  $("#schedule-query-field").style.display = ["e621-query", "rule34-query"].includes(type) ? "" : "none";
+  $("#schedule-pool-id-field").style.display = type === "e621-pool" ? "" : "none";
+  $("#schedule-pool-ids-field").style.display = type === "pool-sync" ? "" : "none";
+}
+
+async function loadScheduleTasks() {
+  const tasks = await api("/api/schedule-tasks");
+  const select = $("#schedule-form").taskType;
+  select.replaceChildren(...tasks.map((task) => {
+    const option = document.createElement("option");
+    option.value = task.value;
+    option.textContent = task.label;
+    return option;
+  }));
+  syncScheduleFields();
+}
+
+async function loadSchedules() {
+  const schedules = await api("/api/schedules");
+  fillTable("schedule-table", schedules, [
+    (row) => row.name,
+    (row) => row.taskType,
+    (row) => `${row.intervalDays} Tag${row.intervalDays === 1 ? "" : "e"}`,
+    (row) => row.enabled ? new Date(row.nextRunAt).toLocaleString() : "deaktiviert",
+    (row) => row.lastJobId || "-",
+    (row) => actions(
+      actionButton("Jetzt", async () => {
+        const job = await api(`/api/schedules/${row.id}/run`, { method: "POST", body: "{}" });
+        toast(`Job gestartet: ${job.id}`);
+        showTab("jobs");
+        await loadJobs();
+      }),
+      actionButton(row.enabled ? "Pause" : "Aktivieren", async () => {
+        await api(`/api/schedules/${row.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ ...row, enabled: !row.enabled })
+        });
+        await loadSchedules();
+      }),
+      actionButton("Loeschen", async () => {
+        await api(`/api/schedules/${row.id}`, { method: "DELETE" });
+        await loadSchedules();
+      })
+    )
+  ]);
+}
+
 $$(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     showTab(tab.dataset.tab);
     if (tab.dataset.tab === "jobs") loadJobs({ preserveScroll: true }).catch((error) => toast(error.message));
+    if (tab.dataset.tab === "scheduler") loadSchedules().catch((error) => toast(error.message));
   });
 });
 
@@ -336,8 +409,36 @@ $("#config-form").addEventListener("submit", async (event) => {
 
 $("#refresh-jobs").addEventListener("click", () => loadJobs({ preserveScroll: true }).catch((error) => toast(error.message)));
 
+$("#schedule-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const body = {
+    name: form.name.value.trim() || form.taskType.selectedOptions[0]?.textContent || form.taskType.value,
+    taskType: form.taskType.value,
+    details: scheduleDetails(form),
+    intervalDays: Number(form.intervalDays.value),
+    enabled: form.enabled.checked,
+    nextRunAt: fromLocalDateTimeValue(form.nextRunAt.value)
+  };
+  await api("/api/schedules", { method: "POST", body: JSON.stringify(body) });
+  form.reset();
+  form.intervalDays.value = "1";
+  form.enabled.checked = true;
+  form.nextRunAt.value = toLocalDateTimeValue();
+  syncScheduleFields();
+  toast("Schedule gespeichert.");
+  await loadSchedules();
+});
+
+$("#schedule-form").taskType.addEventListener("change", syncScheduleFields);
+$("#refresh-schedules").addEventListener("click", () => loadSchedules().catch((error) => toast(error.message)));
+
 setInterval(() => {
   if ($("#jobs").classList.contains("active")) loadJobs({ preserveScroll: true }).catch(() => {});
+  if ($("#scheduler").classList.contains("active")) loadSchedules().catch(() => {});
 }, 5000);
 
 loadConfig().catch((error) => toast(error.message));
+loadScheduleTasks().then(() => {
+  $("#schedule-form").nextRunAt.value = toLocalDateTimeValue();
+}).catch((error) => toast(error.message));

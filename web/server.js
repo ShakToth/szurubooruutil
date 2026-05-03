@@ -12,6 +12,7 @@ const ROOT = path.resolve(__dirname, "..");
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(DATA_DIR, "downloads");
+const SCHEDULES_PATH = path.join(DATA_DIR, "schedules.json");
 const PORT = Number(process.env.PORT || 8080);
 const MAX_E621_PAGES = Number(process.env.MAX_E621_PAGES || 20);
 const MAX_RULE34_PAGES = Number(process.env.MAX_RULE34_PAGES || 20);
@@ -21,6 +22,11 @@ const E621_RETRY_BASE_MS = Number(process.env.E621_RETRY_BASE_MS || 5000);
 const execFileAsync = promisify(execFile);
 
 const jobs = new Map();
+const schedules = new Map();
+const scheduleTimers = new Map();
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const RUNNING_SCHEDULE_RETRY_MS = 15 * 60 * 1000;
 
 function jsonResponse(res, status, body) {
   const payload = JSON.stringify(body);
@@ -91,6 +97,63 @@ function publicConfig(config) {
       hasApiKey: Boolean(config.rule34.apiKey)
     }
   };
+}
+
+async function loadSchedules() {
+  await mkdir(DATA_DIR, { recursive: true });
+  let stored = [];
+  try {
+    stored = JSON.parse(await readFile(SCHEDULES_PATH, "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  schedules.clear();
+  for (const schedule of Array.isArray(stored) ? stored : []) {
+    if (schedule?.id) schedules.set(schedule.id, normalizeSchedule(schedule));
+  }
+}
+
+async function saveSchedules() {
+  await mkdir(DATA_DIR, { recursive: true });
+  const payload = [...schedules.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  await writeFile(SCHEDULES_PATH, JSON.stringify(payload, null, 2), "utf8");
+}
+
+function normalizeSchedule(input) {
+  const now = new Date().toISOString();
+  const intervalDays = Math.max(1, Math.floor(Number(input.intervalDays) || 1));
+  const nextRunAt = validDateIso(input.nextRunAt) || new Date(Date.now() + intervalDays * DAY_MS).toISOString();
+  return {
+    id: input.id || randomUUID(),
+    name: String(input.name || input.taskType || "Schedule").trim().slice(0, 120),
+    taskType: String(input.taskType || "").trim(),
+    details: input.details && typeof input.details === "object" ? input.details : {},
+    intervalDays,
+    enabled: input.enabled !== false,
+    nextRunAt,
+    lastRunAt: validDateIso(input.lastRunAt) || null,
+    lastJobId: input.lastJobId || null,
+    createdAt: validDateIso(input.createdAt) || now,
+    updatedAt: validDateIso(input.updatedAt) || now
+  };
+}
+
+function validDateIso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function supportedScheduleTasks() {
+  return [
+    { value: "e621-query", label: "e621 Query importieren", fields: ["query"] },
+    { value: "rule34-query", label: "rule34.xxx Query importieren", fields: ["query"] },
+    { value: "e621-pool", label: "e621 Pool importieren", fields: ["poolId"] },
+    { value: "pool-sync", label: "e621 Pools syncen", fields: ["poolIds"] },
+    { value: "pool-sync-status", label: "Pool-Sync Status pruefen", fields: [] },
+    { value: "duplicate-scan", label: "Duplicate Scan", fields: [] }
+  ];
 }
 
 function e621Headers(config) {
@@ -1096,6 +1159,134 @@ function startJob(type, details, worker) {
   return job;
 }
 
+function scheduledTaskJob(taskType, details = {}) {
+  const normalizedDetails = details && typeof details === "object" ? details : {};
+  switch (taskType) {
+    case "e621-query": {
+      const query = String(normalizedDetails.query || "").trim();
+      if (!query) throw new Error("e621 Query fehlt.");
+      return {
+        type: "e621-query",
+        details: { query },
+        worker: async (log) => importE621Query(await loadConfig(), query, log)
+      };
+    }
+    case "rule34-query": {
+      const query = String(normalizedDetails.query || "").trim();
+      if (!query) throw new Error("rule34.xxx Query fehlt.");
+      return {
+        type: "rule34-query",
+        details: { query },
+        worker: async (log) => importRule34Query(await loadConfig(), query, log)
+      };
+    }
+    case "e621-pool": {
+      const poolId = Number(normalizedDetails.poolId);
+      if (!poolId) throw new Error("Pool-ID fehlt.");
+      return {
+        type: "e621-pool",
+        details: { poolId },
+        worker: async (log) => importE621Pool(await loadConfig(), poolId, log)
+      };
+    }
+    case "pool-sync": {
+      const ids = Array.isArray(normalizedDetails.poolIds)
+        ? normalizedDetails.poolIds.map(Number).filter(Boolean)
+        : String(normalizedDetails.poolIds || "").split(/[^0-9]+/).filter(Boolean).map(Number);
+      if (!ids.length) throw new Error("Pool-ID fehlt.");
+      return {
+        type: "pool-sync",
+        details: { poolIds: ids },
+        worker: async (log) => {
+          const config = await loadConfig();
+          const results = [];
+          for (const poolId of ids) results.push(await syncE621Pool(config, poolId, log));
+          return results;
+        }
+      };
+    }
+    case "pool-sync-status":
+      return {
+        type: "pool-sync-status",
+        details: {},
+        worker: async (log) => poolSyncStatus(await loadConfig(), log)
+      };
+    case "duplicate-scan":
+      return {
+        type: "duplicate-scan",
+        details: {},
+        worker: async (log) => {
+          const posts = await listAllSzuruPosts(await loadConfig(), log);
+          const groups = duplicateGroups(posts);
+          return { postCount: posts.length, duplicateGroupCount: groups.length, groups };
+        }
+      };
+    default:
+      throw new Error(`Unbekannter Scheduler-Prozess: ${taskType}`);
+  }
+}
+
+function startScheduledTask(schedule) {
+  const task = scheduledTaskJob(schedule.taskType, schedule.details);
+  const job = startJob(task.type, { ...task.details, scheduleId: schedule.id, scheduleName: schedule.name }, task.worker);
+  schedule.lastRunAt = new Date().toISOString();
+  schedule.lastJobId = job.id;
+  schedule.nextRunAt = new Date(Date.now() + schedule.intervalDays * DAY_MS).toISOString();
+  schedule.updatedAt = new Date().toISOString();
+  return job;
+}
+
+function scheduleNextRun(schedule) {
+  clearTimeout(scheduleTimers.get(schedule.id));
+  scheduleTimers.delete(schedule.id);
+  if (!schedule.enabled) return;
+  const delay = Math.max(0, new Date(schedule.nextRunAt).getTime() - Date.now());
+  scheduleTimers.set(schedule.id, setTimeout(() => runDueSchedule(schedule.id), Math.min(delay, MAX_TIMEOUT_MS)));
+}
+
+async function runDueSchedule(id, force = false) {
+  const schedule = schedules.get(id);
+  if (!schedule || (!schedule.enabled && !force)) return null;
+  if (!force && new Date(schedule.nextRunAt).getTime() > Date.now()) {
+    scheduleNextRun(schedule);
+    return null;
+  }
+  if (!force && schedule.lastJobId && jobs.get(schedule.lastJobId)?.status === "running") {
+    schedule.nextRunAt = new Date(Date.now() + RUNNING_SCHEDULE_RETRY_MS).toISOString();
+    schedule.updatedAt = new Date().toISOString();
+    await saveSchedules();
+    scheduleNextRun(schedule);
+    return null;
+  }
+
+  const job = startScheduledTask(schedule);
+  schedules.set(schedule.id, schedule);
+  await saveSchedules();
+  scheduleNextRun(schedule);
+  return job;
+}
+
+function parseScheduleInput(body, existing = {}) {
+  const intervalDays = Math.floor(Number(body.intervalDays ?? existing.intervalDays ?? 1));
+  if (intervalDays < 1) throw new Error("Intervall muss mindestens 1 Tag sein.");
+  const taskType = String(body.taskType ?? existing.taskType ?? "").trim();
+  scheduledTaskJob(taskType, body.details ?? existing.details ?? {});
+  const now = new Date().toISOString();
+  return normalizeSchedule({
+    ...existing,
+    name: body.name ?? existing.name ?? taskType,
+    taskType,
+    details: body.details ?? existing.details ?? {},
+    intervalDays,
+    enabled: body.enabled ?? existing.enabled ?? true,
+    nextRunAt: body.nextRunAt ?? existing.nextRunAt ?? new Date(Date.now() + intervalDays * DAY_MS).toISOString(),
+    updatedAt: now,
+    createdAt: existing.createdAt || now,
+    lastRunAt: existing.lastRunAt || null,
+    lastJobId: existing.lastJobId || null
+  });
+}
+
 async function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
@@ -1154,6 +1345,44 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/api/jobs/") && req.method === "GET") {
       const job = jobs.get(url.pathname.split("/").at(-1));
       return job ? jsonResponse(res, 200, job) : jsonResponse(res, 404, { error: "Job nicht gefunden." });
+    }
+    if (url.pathname === "/api/schedule-tasks" && req.method === "GET") {
+      return jsonResponse(res, 200, supportedScheduleTasks());
+    }
+    if (url.pathname === "/api/schedules" && req.method === "GET") {
+      return jsonResponse(res, 200, [...schedules.values()].sort((a, b) => a.nextRunAt.localeCompare(b.nextRunAt)));
+    }
+    if (url.pathname === "/api/schedules" && req.method === "POST") {
+      const schedule = parseScheduleInput(await readJson(req));
+      schedules.set(schedule.id, schedule);
+      await saveSchedules();
+      scheduleNextRun(schedule);
+      return jsonResponse(res, 201, schedule);
+    }
+    if (url.pathname.startsWith("/api/schedules/")) {
+      const [, action] = url.pathname.slice("/api/schedules/".length).split("/");
+      const id = url.pathname.slice("/api/schedules/".length).split("/")[0];
+      const schedule = schedules.get(id);
+      if (!schedule) return jsonResponse(res, 404, { error: "Schedule nicht gefunden." });
+
+      if (!action && req.method === "PUT") {
+        const updated = parseScheduleInput(await readJson(req), schedule);
+        schedules.set(id, updated);
+        await saveSchedules();
+        scheduleNextRun(updated);
+        return jsonResponse(res, 200, updated);
+      }
+      if (!action && req.method === "DELETE") {
+        clearTimeout(scheduleTimers.get(id));
+        scheduleTimers.delete(id);
+        schedules.delete(id);
+        await saveSchedules();
+        return jsonResponse(res, 200, { ok: true });
+      }
+      if (action === "run" && req.method === "POST") {
+        const job = await runDueSchedule(id, true);
+        return jsonResponse(res, 202, job);
+      }
     }
     if (url.pathname === "/api/import/e621-post" && req.method === "POST") {
       const body = await readJson(req);
@@ -1294,6 +1523,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 await mkdir(DOWNLOAD_DIR, { recursive: true });
+await loadSchedules();
+for (const schedule of schedules.values()) scheduleNextRun(schedule);
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Szurubooru Tools Web laeuft auf Port ${PORT}`);
 });
